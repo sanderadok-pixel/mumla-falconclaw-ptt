@@ -140,6 +140,7 @@ public class MumlaService extends HumlaService implements
         @Override
         public void onConnected() {
             enableMediaButtonPtt();
+            startBlePtt();
             if (mNotification != null) {
                 final String tor = mSettings.isTorEnabled() ? " (Tor)" : "";
                 mNotification.setCustomContentText(getString(R.string.connected) + tor);
@@ -318,10 +319,9 @@ public class MumlaService extends HumlaService implements
                             || code == KeyEvent.KEYCODE_MEDIA_STOP
                             || code == KeyEvent.KEYCODE_HEADSETHOOK;
                     if (!isPtt) return false;
-                    if (ke.getAction() == KeyEvent.ACTION_DOWN && ke.getRepeatCount() == 0) {
-                        toggleTalkFromMediaButton(); // single-tap button: toggle mic on/off
-                    }
-                    return true; // consume so media apps (e.g. Spotify) don't also react
+                    // BLU-PTT also emits an AVRCP media tap; consume it so music apps don't
+                    // react. Actual push-to-talk is driven by the BLE channel (startBlePtt()).
+                    return true;
                 }
             });
             PlaybackState ps = new PlaybackState.Builder()
@@ -350,15 +350,136 @@ public class MumlaService extends HumlaService implements
         }
     }
 
-    private void toggleTalkFromMediaButton() {
-        if (!isConnectionEstablished()) return;
-        if (!Settings.ARRAY_INPUT_METHOD_PTT.equals(mSettings.getInputMethod())) return;
-        setTalkingState(!isTalking());
-        if (mPTTSoundEnabled) {
-            AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
-            if (am != null) am.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD, -1);
+    // --- Falconclaw: BLE hold-to-talk via the BLU-PTT button ---
+    // The button exposes a vendor GATT service whose notify characteristic reports
+    // 0x01 on press and 0x00 on release. We subscribe to it and key the mic on press,
+    // unkey on release -- true hold-to-talk, the same channel Zello uses.
+    private static final java.util.UUID FC_PTT_SERVICE =
+            java.util.UUID.fromString("89a8591d-bb19-485b-9f59-58492bc33e24");
+    private static final java.util.UUID FC_PTT_NOTIFY =
+            java.util.UUID.fromString("894c8042-e841-461c-a5c9-5a73d25db08e");
+    private static final java.util.UUID FC_CCCD =
+            java.util.UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
+    private android.bluetooth.BluetoothGatt mPttGatt;
+    private final android.os.Handler mPttHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+
+    private boolean hasBtConnectPerm() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true;
+        return checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void startBlePtt() {
+        try {
+            if (mPttGatt != null) return;
+            if (!hasBtConnectPerm()) {
+                Log.w(TAG, "FCPTT BLE: BLUETOOTH_CONNECT not granted yet");
+                return;
+            }
+            android.bluetooth.BluetoothManager bm =
+                    (android.bluetooth.BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
+            android.bluetooth.BluetoothAdapter adapter = (bm != null) ? bm.getAdapter() : null;
+            if (adapter == null || !adapter.isEnabled()) {
+                Log.w(TAG, "FCPTT BLE: bluetooth off/unavailable");
+                return;
+            }
+            android.bluetooth.BluetoothDevice device = null;
+            for (android.bluetooth.BluetoothDevice d : adapter.getBondedDevices()) {
+                String n = d.getName();
+                if (n != null && n.toUpperCase(java.util.Locale.US).contains("PTT")) {
+                    device = d;
+                    break;
+                }
+            }
+            if (device == null) {
+                Log.w(TAG, "FCPTT BLE: no bonded PTT button found");
+                return;
+            }
+            Log.i(TAG, "FCPTT BLE: connecting to " + device.getName());
+            mPttGatt = device.connectGatt(this, true, mPttGattCallback,
+                    android.bluetooth.BluetoothDevice.TRANSPORT_LE);
+        } catch (Exception e) {
+            Log.e(TAG, "FCPTT BLE: start failed", e);
         }
     }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private void stopBlePtt() {
+        if (mPttGatt != null) {
+            try {
+                mPttGatt.disconnect();
+                mPttGatt.close();
+            } catch (Exception e) {
+                Log.e(TAG, "FCPTT BLE: stop failed", e);
+            }
+            mPttGatt = null;
+        }
+    }
+
+    private void handlePttValue(byte[] v) {
+        if (v == null || v.length == 0) return;
+        final boolean pressed = (v[0] != 0);
+        mPttHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!isConnectionEstablished()) return;
+                if (!Settings.ARRAY_INPUT_METHOD_PTT.equals(mSettings.getInputMethod())) return;
+                setTalkingState(pressed);
+            }
+        });
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private final android.bluetooth.BluetoothGattCallback mPttGattCallback =
+            new android.bluetooth.BluetoothGattCallback() {
+        @Override
+        public void onConnectionStateChange(android.bluetooth.BluetoothGatt gatt, int status, int newState) {
+            if (newState == android.bluetooth.BluetoothProfile.STATE_CONNECTED) {
+                Log.i(TAG, "FCPTT BLE: connected, discovering services");
+                try { gatt.discoverServices(); } catch (Exception e) { Log.e(TAG, "FCPTT BLE", e); }
+            } else if (newState == android.bluetooth.BluetoothProfile.STATE_DISCONNECTED) {
+                Log.i(TAG, "FCPTT BLE: disconnected (auto-reconnect armed)");
+            }
+        }
+
+        @Override
+        public void onServicesDiscovered(android.bluetooth.BluetoothGatt gatt, int status) {
+            try {
+                android.bluetooth.BluetoothGattService svc = gatt.getService(FC_PTT_SERVICE);
+                if (svc == null) { Log.w(TAG, "FCPTT BLE: PTT service not found"); return; }
+                android.bluetooth.BluetoothGattCharacteristic ch = svc.getCharacteristic(FC_PTT_NOTIFY);
+                if (ch == null) { Log.w(TAG, "FCPTT BLE: notify char not found"); return; }
+                gatt.setCharacteristicNotification(ch, true);
+                android.bluetooth.BluetoothGattDescriptor cccd = ch.getDescriptor(FC_CCCD);
+                if (cccd != null) {
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        gatt.writeDescriptor(cccd,
+                                android.bluetooth.BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                    } else {
+                        cccd.setValue(android.bluetooth.BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                        gatt.writeDescriptor(cccd);
+                    }
+                }
+                Log.i(TAG, "FCPTT BLE: notifications enabled - hold-to-talk active");
+            } catch (Exception e) {
+                Log.e(TAG, "FCPTT BLE: service discovery failed", e);
+            }
+        }
+
+        @Override
+        public void onCharacteristicChanged(android.bluetooth.BluetoothGatt gatt,
+                android.bluetooth.BluetoothGattCharacteristic ch) {
+            if (FC_PTT_NOTIFY.equals(ch.getUuid())) handlePttValue(ch.getValue());
+        }
+
+        @Override
+        public void onCharacteristicChanged(android.bluetooth.BluetoothGatt gatt,
+                android.bluetooth.BluetoothGattCharacteristic ch, byte[] value) {
+            if (FC_PTT_NOTIFY.equals(ch.getUuid())) handlePttValue(value);
+        }
+    };
 
     @Override
     public void onCreate() {
@@ -388,6 +509,7 @@ public class MumlaService extends HumlaService implements
             mTTS = new TextToSpeech(this, mTTSInitListener);
 
         mTalkReceiver = new TalkBroadcastReceiver(this);
+        startBlePtt();
     }
 
     @Override
@@ -415,6 +537,7 @@ public class MumlaService extends HumlaService implements
         }
 
         disableMediaButtonPtt();
+        stopBlePtt();
         unregisterObserver(mObserver);
         if(mTTS != null) mTTS.shutdown();
         mMessageLog = null;

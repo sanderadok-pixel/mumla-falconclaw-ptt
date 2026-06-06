@@ -40,6 +40,13 @@ jobs:
           cp MumlaService.java mumla/app/src/main/java/se/lublin/mumla/service/MumlaService.java
           grep -n "Falconclaw" mumla/app/src/main/java/se/lublin/mumla/service/MumlaService.java | head
 
+      - name: Use distinct package id + label (install alongside stock Mumla)
+        run: |
+          sed -i 's/applicationId "se.lublin.mumla"/applicationId "se.lublin.mumla.falconclaw"/g' mumla/app/build.gradle
+          sed -i 's#<string name="app_name">Mumla</string>#<string name="app_name">Mumla FC</string>#g' mumla/app/src/main/res/values/strings_notranslate.xml
+          grep -n "applicationId" mumla/app/build.gradle
+          grep -n "app_name" mumla/app/src/main/res/values/strings_notranslate.xml
+
       - name: Give Gradle enough heap
         working-directory: mumla
         run: echo "org.gradle.jvmargs=-Xmx5g -Dfile.encoding=UTF-8" >> gradle.properties

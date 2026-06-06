@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
   push:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -51,9 +54,22 @@ jobs:
         working-directory: mumla
         run: ./gradlew assembleFossDebug --no-daemon --stacktrace
 
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp mumla/app/build/outputs/apk/foss/debug/*.apk out/mumla-falconclaw-ptt.apk
+          ls -la out
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: mumla-falconclaw-foss-debug
-          path: mumla/app/build/outputs/apk/foss/debug/*.apk
+          path: out/mumla-falconclaw-ptt.apk
           if-no-files-found: error
+
+      - name: Publish APK to Release (for easy phone download)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Falconclaw PTT build
+          files: out/mumla-falconclaw-ptt.apk

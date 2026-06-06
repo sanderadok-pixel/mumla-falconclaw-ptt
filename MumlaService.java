@@ -319,9 +319,7 @@ public class MumlaService extends HumlaService implements
                             || code == KeyEvent.KEYCODE_HEADSETHOOK;
                     if (!isPtt) return false;
                     if (ke.getAction() == KeyEvent.ACTION_DOWN && ke.getRepeatCount() == 0) {
-                        startTalkFromMediaButton(); // hold-to-talk: press = mic on
-                    } else if (ke.getAction() == KeyEvent.ACTION_UP) {
-                        stopTalkFromMediaButton();  // release = mic off
+                        toggleTalkFromMediaButton(); // single-tap button: toggle mic on/off
                     }
                     return true; // consume so media apps (e.g. Spotify) don't also react
                 }
@@ -352,14 +350,14 @@ public class MumlaService extends HumlaService implements
         }
     }
 
-    private void startTalkFromMediaButton() {
+    private void toggleTalkFromMediaButton() {
         if (!isConnectionEstablished()) return;
         if (!Settings.ARRAY_INPUT_METHOD_PTT.equals(mSettings.getInputMethod())) return;
-        if (!isTalking()) setTalkingState(true);
-    }
-
-    private void stopTalkFromMediaButton() {
-        if (isTalking()) setTalkingState(false);
+        setTalkingState(!isTalking());
+        if (mPTTSoundEnabled) {
+            AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (am != null) am.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD, -1);
+        }
     }
 
     @Override

@@ -11,7 +11,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout this repo (has MumlaService.java)
+      - name: Checkout this repo
         uses: actions/checkout@v4
 
       - name: Set up JDK 21
@@ -40,10 +40,13 @@ jobs:
           git checkout 68a83111071d413557fbb523d8f546de1c5b19e1
           git submodule update --init --recursive
 
-      - name: Apply Falconclaw PTT change
+      - name: Apply Falconclaw PTT changes (BLE hold-to-talk)
         run: |
           cp MumlaService.java mumla/app/src/main/java/se/lublin/mumla/service/MumlaService.java
-          grep -n "Falconclaw" mumla/app/src/main/java/se/lublin/mumla/service/MumlaService.java | head
+          cp MumlaActivity.java mumla/app/src/main/java/se/lublin/mumla/app/MumlaActivity.java
+          cp AndroidManifest.xml mumla/app/src/main/AndroidManifest.xml
+          grep -n "FCPTT BLE" mumla/app/src/main/java/se/lublin/mumla/service/MumlaService.java | head -1
+          grep -n "BLUETOOTH_CONNECT" mumla/app/src/main/AndroidManifest.xml
 
       - name: Use distinct package id + label (install alongside stock Mumla)
         run: |

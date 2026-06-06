@@ -23,6 +23,11 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Use stable debug signing key (so updates install cleanly)
+        run: |
+          mkdir -p ~/.android
+          cp debug.keystore ~/.android/debug.keystore
+
       - name: Install SDK packages (platform 36, build-tools, NDK 25.1.8937393)
         run: |
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
@@ -45,7 +50,6 @@ jobs:
           sed -i 's/applicationId "se.lublin.mumla"/applicationId "se.lublin.mumla.falconclaw"/g' mumla/app/build.gradle
           sed -i 's#<string name="app_name">Mumla</string>#<string name="app_name">Mumla FC</string>#g' mumla/app/src/main/res/values/strings_notranslate.xml
           grep -n "applicationId" mumla/app/build.gradle
-          grep -n "app_name" mumla/app/src/main/res/values/strings_notranslate.xml
 
       - name: Give Gradle enough heap
         working-directory: mumla

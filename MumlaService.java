@@ -302,8 +302,8 @@ public class MumlaService extends HumlaService implements
         if (mMediaButtonSession != null) return;
         try {
             mMediaButtonSession = new MediaSession(this, "FalconclawPTT");
-            mMediaButtonSession.setFlags(MediaSession.FLAG_HANDLE_MEDIA_BUTTONS
-                    | MediaSession.FLAG_HANDLE_TRANSPORT_CONTROLS);
+            // Note: framework MediaSession handles media buttons automatically
+            // when active (the old FLAG_HANDLE_* flags were removed), so no setFlags.
             mMediaButtonSession.setCallback(new MediaSession.Callback() {
                 @Override
                 public boolean onMediaButtonEvent(Intent mediaButtonIntent) {

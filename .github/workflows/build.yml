@@ -1,0 +1,59 @@
+name: Build Mumla (Falconclaw PTT)
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo (has MumlaService.java)
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages (platform 36, build-tools, NDK 25.1.8937393)
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;25.1.8937393"
+
+      - name: Clone Mumla at pinned commit (with submodules)
+        run: |
+          git clone --recurse-submodules https://gitlab.com/quite/mumla.git mumla
+          cd mumla
+          git checkout 68a83111071d413557fbb523d8f546de1c5b19e1
+          git submodule update --init --recursive
+
+      - name: Apply Falconclaw PTT change
+        run: |
+          cp MumlaService.java mumla/app/src/main/java/se/lublin/mumla/service/MumlaService.java
+          grep -n "Falconclaw" mumla/app/src/main/java/se/lublin/mumla/service/MumlaService.java | head
+
+      - name: Give Gradle enough heap
+        working-directory: mumla
+        run: echo "org.gradle.jvmargs=-Xmx5g -Dfile.encoding=UTF-8" >> gradle.properties
+
+      - name: Build bundled crypto (spongycastle) jars
+        working-directory: mumla
+        run: |
+          chmod +x gradlew libraries/humla/gradlew
+          ( cd libraries/humla/libs/humla-spongycastle && ../../gradlew jar --no-daemon --stacktrace )
+
+      - name: Build foss debug APK
+        working-directory: mumla
+        run: ./gradlew assembleFossDebug --no-daemon --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mumla-falconclaw-foss-debug
+          path: mumla/app/build/outputs/apk/foss/debug/*.apk
+          if-no-files-found: error
